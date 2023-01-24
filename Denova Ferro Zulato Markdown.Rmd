@@ -1,0 +1,321 @@
+---
+title: "Satellite Images of Hurricane Damage"
+author: "Zulato Davide - Denova Matteo - Ferro Simone"
+date: "25/2/2022"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Hurricane Damage
+Task di classificazione binaria 
+
+## Caricamento Dataset
+
+Il dataset in esame è composto da immagini satellitari successive all'Uragano che ha colpito il Texas nel 2017.Le immagini sono divise in 2 gruppi (damage and no_damage). L'obiettivo è di implementare un modello che sia in grado di identificare automaticamente se una regione ha subito danni legati all'allagamento.
+
+Carichiamo le librerie necessarie e definiamo la directory di lavoro
+
+```{r}
+library(keras)
+library(tensorflow)
+setwd("C:/Users/Davide Zulato/Desktop/satellite")
+getwd()
+```
+
+
+## Directory di lavoro
+
+Nel dataset utilizzato in questo lavoro le immagini sono suddivise in 4 cartelle, ognuna delle quali contiene a sua volta le sottocartelle damage e no_damage:
+Training (train_another): 10000 immagini (5000 damage e 5000 no_damage)
+Validation (validation_another): 1000 immagini per ogni classe
+Test (test_another): test sbilanciato 8000 damaged e 1000 undamaged
+Test Bilanciato (test): 1000 immagini per ogni classe
+
+Dopo aver scaricato il dataset, con il codice seguente definiamo la directory di lavoro e verifichiamo la dimensione dei rispettivi sets
+
+```{r keras}
+original_dataset_dir <- "C:/Users/Davide Zulato/Desktop/satellite"
+base_dir <- "C:/Users/Davide Zulato/Desktop/satellite"
+
+train_damage_dir <- "C:/Users/Davide Zulato/Desktop/satellite/train_another/damage"
+cat("total training damage images:", length(list.files(train_damage_dir)), "\n")
+
+train_no.damage_dir <- "C:/Users/Davide Zulato/Desktop/satellite/train_another/no_damage"
+cat("total training no damage images:", length(list.files(train_no.damage_dir)), "\n")
+
+validation_damage_dir <- "C:/Users/Davide Zulato/Desktop/satellite/validation_another/damage"
+cat("total validation damage images:", length(list.files(validation_damage_dir)), "\n")
+
+validation_no.damage_dir <- "C:/Users/Davide Zulato/Desktop/satellite/validation_another/no_damage"
+cat("total validation nodamage images:", length(list.files(validation_no.damage_dir)), "\n")
+
+testsbil_damage_dir <- "C:/Users/Davide Zulato/Desktop/satellite/test_another/damage"
+cat("total test sbilanciato damage images:", length(list.files(testsbil_damage_dir)), "\n")
+
+testsbil_no.damage_dir <- "C:/Users/Davide Zulato/Desktop/satellite/test_another/no_damage"
+cat("total test sbilanciato no damage images:", length(list.files(testsbil_no.damage_dir)), "\n")
+
+testbil_damage_dir <- "C:/Users/Davide Zulato/Desktop/satellite/test/damage"
+cat("total test bilanciato damage images:", length(list.files(testbil_damage_dir)), "\n")
+
+testbil_no.damage_dir <- "C:/Users/Davide Zulato/Desktop/satellite/test/no_damage"
+cat("total test bilanciato no damage images:", length(list.files(testbil_no.damage_dir)), "\n")
+```
+
+## Preparazione dei dati
+
+Le immagini del dataset sono in formato .jpeg, i dati devono quindi essere trasformarti in tensori e utilizzati (tensori 3D) come input nella rete. la preparazione dei dati avviene attraverso i seguenti steps:
+
+1)Leggere i file delle immagini.
+2)Trasformare le immagini da JPEG a RGB (griglia di pixels).
+3)Convertire il risultato in tensori di tipo floating.
+4)Riscale i pixel in un intervallo tra [0, 1].
+
+I passaggi sono svolti attraverso la funzione image_data_generator() 
+
+
+```{r}
+train_datagen <- image_data_generator(rescale = 1/255)
+validation_datagen <- image_data_generator(rescale = 1/255)
+test_datagen <- image_data_generator(rescale = 1/255)
+
+train_dir <- "C:/Users/Davide Zulato/Desktop/satellite/train_another"
+
+train_generator <- flow_images_from_directory(
+  train_dir,
+  train_datagen,
+  # Riscaliamo le immagini tra 150 x 150
+  target_size = c(150, 150),
+  batch_size = 32,
+  # classificazione binaria
+  class_mode = "binary"
+)
+
+validation_dir <- "C:/Users/Davide Zulato/Desktop/satellite/validation_another"
+
+validation_generator <- flow_images_from_directory(
+  validation_dir,
+  validation_datagen,
+  target_size = c(150, 150),
+  batch_size = 32,
+  class_mode = "binary"
+)
+```
+
+La dimensionalità dell'output sarà (32,150,150,3). 32 immagini per batch ognuna delle quali ha dimensione 150 x 150 in qualità RGB (3)
+
+## Architettura prima rete
+
+L'architettura della rete segue la classica struttura delle reti convoluzionali: alterniamo convolutional layers a pooling layers (Max pooling). gli ultimi strati seguono una struttura FFNN e sono quelli che operano la classificazione binaria; l'ultimo strato, poichè ci confrontiamo con un task di classificazione binaria, è formato da una funzione di attivazione di tipo sigmoidale. Scegliamo un dropout rate del 50% che si applica all'output del layer immediatamente precedente.
+
+Osserviamo che la profondità delle feature maps aumenta di strato in strato, mentre la dimensione delle feature maps diminuisce. 
+
+```{r}
+
+model <- keras_model_sequential() %>%
+  layer_conv_2d(filters = 32, kernel_size = c(3, 3), activation = "relu",
+                input_shape = c(150, 150, 3)) %>%
+  layer_max_pooling_2d(pool_size = c(2, 2)) %>%
+  layer_conv_2d(filters = 64, kernel_size = c(3, 3), activation = "relu") %>% layer_max_pooling_2d(pool_size = c(2, 2)) %>%
+  layer_conv_2d(filters = 128, kernel_size = c(3, 3), activation = "relu") %>% layer_max_pooling_2d(pool_size = c(2, 2)) %>%
+  layer_conv_2d(filters = 128, kernel_size = c(3, 3), activation = "relu") %>% layer_max_pooling_2d(pool_size = c(2, 2)) %>%
+  layer_flatten() %>%
+  layer_dropout(rate = 0.5) %>%
+  layer_dense(units = 512, activation = "relu") %>%
+  layer_dense(units = 1, activation = "sigmoid")
+
+summary(model)
+```
+
+## Model Compile
+
+In questo passaggio utilizzeremo l'ottimizzatore RMSprop e la binary crossentropy come loss function poichè ci troviamo in un contesto di classificazione binaria. il learning rate scelto è 1e-4. 
+
+```{r}
+model %>% compile(
+  loss = "binary_crossentropy",
+  optimizer = optimizer_rmsprop(learning_rate = 1e-4),
+  metrics = c("acc")
+)
+
+```
+
+## Alleniamo il modello
+
+Attraverso i comandi successivi alleniamo il modello specificato in precedenza utilizzando 100 epoche e 100 steps per epoca.salviamo poi il modello dopo il training e osserviamo la performance nel training e nel validation per valutare l'eventuale presenza di overfitting.
+
+```{r}
+history <- model %>% fit(
+  train_generator,
+  # Numero di campioni per ogni epoch
+  steps_per_epoch = 100,
+  epochs = 100,
+  validation_data = validation_generator,
+  # batches da prendere dal validation_generator
+  validation_steps = 50
+)
+
+# Salviamo il modello .
+model %>% save_model_hdf5("Damage_NOdamage_1.h5")
+```
+
+Curve di loss e accuracy in training e validation
+
+```{r}
+# Confronto tra training e validation 
+plot(history)
+
+```
+
+Il confronto tra train e validation non mostra preoccupanti caratteristiche di overfitting, l'utilizzo del dropout ha portato a miglioramenti. Il dropout, applicato ad un layer durante il training, inibisce (i.e. setta a zero) un numero casuale di output features dello strato (50% nella nostra rete) al fine di evitare le la rete insista nell'acquisire patterns non rilevanti.  
+
+## Performances sui test set bilanciato e sbilanciato
+
+Il dataset contiene sia un test set bilanciato che un test set sbilanciato. il test sbilanciato è composto da 1000 non danneggiati e da 8000 danneggiati. il test bilanciato è invece composto da 2000 immagini equamente divise tra danneggiate e non danneggiate.  
+
+```{r}
+test_dir <- "C:/Users/Davide Zulato/Desktop/satellite/test_another"
+test.bil_dir <- "C:/Users/Davide Zulato/Desktop/satellite/test"
+
+test_generator <- flow_images_from_directory(
+  test_dir,
+  test_datagen,
+  target_size = c(150, 150),
+  batch_size = 32,
+  class_mode = "binary"
+)
+
+test.bil_generator <- flow_images_from_directory(
+  test.bil_dir,
+  test_datagen,
+  target_size = c(150, 150),
+  batch_size = 32,
+  class_mode = "binary"
+)
+```
+
+Valutiamo l'accuracy sul test set sbilanciato
+
+```{r}
+model %>% evaluate_generator(test_generator, steps = 50)
+```
+
+Valutiamo l'accuracy sul test set Bilanciato
+
+```{r}
+model %>% evaluate_generator(test.bil_generator, steps = 50)
+
+```
+
+
+
+## Visualizziamo come la nostra rete apprende i patterns dalle immagini
+
+ci occupiamo in particolare di visualizzare gli output intermedi della rete convoluzionale(intermediate activations) informativi per comprendere come la rete trasforma l'input attraverso layers successivi.
+
+```{r}
+library(keras)
+# carichiamo il modello salvato, la prima rete mostrata
+model <- load_model_hdf5("Damage_NOdamage_1.h5")
+model
+```
+
+Pre-processiamo un immagine dal test, non utilizzata per allenare il modello contenuta nella cartella damage
+
+```{r}
+img_path <- "C:/Users/Davide Zulato/Desktop/satellite/test/damage/-95.571637_29.754596999999997.jpeg"
+img <- image_load(img_path, target_size = c(150,150))
+img_tensor <- image_to_array(img)
+img_tensor <- array_reshape(img_tensor, c(1, 150, 150,3))
+#il modello è stato allenato su inputs processati in questo modo
+img_tensor <- img_tensor/255 
+dim(img_tensor)
+```
+
+mostriamo l'immagine non allenata dal modello presa dal test e appartenente al gruppo "Damage"
+
+```{r}
+plot(as.raster(img_tensor[1,,,]))
+```
+
+Instanziamo un modello da un tensore di input e una lista di tensori di output
+
+```{r}
+layer_outputs <- lapply(model$layers[1:8],function(layer) layer$output)
+activation_model <- keras_model(inputs= model$input, outputs = layer_outputs)
+```
+
+il seguente comando restituisce una lista di arrays, un array per layer activation 
+
+```{r}
+activations <- activation_model %>% predict(img_tensor)
+```
+
+activation del primo convolution layer per l'immagine dell'area danneggiata in input
+
+```{r}
+first_layer_activation <- activations[[1]]
+dim(first_layer_activation)
+```
+
+Funzione che ci permetterà di visualizzare i canali
+
+```{r}
+plot_channel <- function(channel){
+  rotate <- function(x) t(apply(x,2,rev))
+  image(rotate(channel), axes = FALSE, asp=1, col= terrain.colors(12))
+}
+```
+
+```{r}
+plot_channel(first_layer_activation[1,,,2])
+```
+Secondo Canale
+
+```{r}
+plot_channel(first_layer_activation[1,,,7])
+```
+Settimo Canale
+
+# il ciclo for che segue serve a visualizzare ogni canale in ogni attivazione intermedia
+
+```{r}
+image_size <- 58
+images_per_row <- 16
+
+for (i in 1:8) {
+  
+  layer_activation <- activations[[i]]
+  layer_name <- model$layers[[i]]$name
+  
+  n_features <- dim(layer_activation)[[4]]
+  n_cols <- n_features %/% images_per_row
+  
+  png(paste0("damage_activations_",i,"_",layer_name, ".png"),
+      width = image_size *images_per_row,
+      height = image_size*n_cols)
+  op <- par(mfrow=c(n_cols, images_per_row), mai= rep_len(0.02,4))
+  
+  for (col in 0:(n_cols -1)) {
+    for (row in 0:(images_per_row-1)) {
+      channel_image <- layer_activation[1,,,(col*images_per_row)+row+1]
+      plot_channel(channel_image)
+      
+    }
+    
+  }
+  
+  par(op)
+  dev.off()
+  
+}
+```
+
+Zulato Davide 876101
+
+Denova Matteo 813101
+
+Ferro Simone 813660
